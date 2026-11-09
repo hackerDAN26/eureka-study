@@ -1,0 +1,58 @@
+:root {
+  --forest: #123d2b;
+  --dark: #0b251b;
+  --emerald: #39a875;
+  --bg: #08140f;
+  --surface: #102a20;
+  --text: #f1f4ef;
+  --sage: #a0b3a6;
+  --line: #1e4a37;
+  --hair: rgba(160, 179, 166, 0.14);
+  --serif: 'Fraunces Variable', 'Fraunces', 'Iowan Old Style', Georgia, serif;
+  --sans: 'Manrope Variable', 'Manrope', ui-sans-serif, system-ui, sans-serif;
+  --ease: cubic-bezier(0.23, 1, 0.32, 1);
+
+  color-scheme: dark;
+  font-family: var(--sans);
+  color: var(--text);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  overflow: hidden;
+}
+
+button,
+input {
+  font: inherit;
+  color: inherit;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--emerald) 40%, transparent);
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+
+:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--emerald) 70%, transparent);
+  outline-offset: 2px;
+}
