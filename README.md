@@ -115,11 +115,50 @@ Groq counts each request’s **input tokens plus the reply it reserves (`max_com
 | **429 “rate limit”** | Waits up to 8 s on the server and retries once; otherwise tries the next model (each has its own limit). If it’s still busy, the student sees “EUREKA will try again in N seconds…” and it retries automatically once (waits up to 30 s). Longer waits get a friendly message with the time. Raw Groq errors are never shown to students (only on `npm run dev`). |
 | **Paid Groq tier** | Set `GROQ_TPM_LIMIT` (e.g. `250000`) so EUREKA reserves longer replies. It also learns higher limits automatically. |
 
-On Groq’s free tier, 8,000 tokens per minute is roughly **one or two tutor replies per minute for the whole site** — fine for testing, not for real students. Upgrade at console.groq.com → Settings → Billing (Developer tier) before launch.
+**Several students at once.** Each Groq model has its own allowance (free plan: 8,000 tokens/min and 200,000 tokens/day per model), shared by everyone on the site. EUREKA (`server/capacity.js`) reads the remaining allowance from every Groq response and sends each request to a model with room. When a student's own model is full, another model answers instead (no message is shown), and if every model is momentarily full the request waits up to 20 s for room rather than failing. On small allowances requests are kept lean (≈ 3,200–3,700 tokens instead of ≈ 7,000), and replies that hit the shorter length end with “say **continue** for the rest”. In testing with Groq-style limits: 3 students chatting together for 3 minutes → 30 replies, 0 errors; 5 students → 1 error in 27 replies. For more users, add billing in Groq (Developer plan: 250,000 tokens/min per model). EUREKA detects the higher limit automatically and goes back to full-length context and replies.
 
 Each response carries an `x-eureka-context` header (e.g. `kept=8;summarised=46;materials=5/8;input=4945`) so you can see what was sent in your browser’s network tab.
 
+## Thousands of students a day
+
+One Groq key is one pool of tokens per minute shared by every student, so the free tier
+(8,000 tokens/min) only fits a few people at a time. EUREKA is built to spread load across
+as much capacity as you give it:
+
+- **Several providers, one app.** Groq is used first; when it's full, requests overflow to
+  OpenRouter (`OPENROUTER_API_KEY`), Cerebras (`CEREBRAS_API_KEY`) or any OpenAI-compatible
+  host (`AI_PROVIDER_1_*`). A provider that's down or has a bad key is skipped automatically.
+  Image questions need Groq (the vision model lives there).
+- **Capacity-aware routing.** The server reads each provider's rate-limit headers, sends each
+  request to the model/provider with the most room, briefly waits (≤ 20 s) instead of failing,
+  and only then shows a friendly "busy" message with an automatic retry.
+- **Fair use on the server.** Each student has a daily allowance and a per-minute burst limit
+  (Free 60/day, Pro 700, Max 2,200 — `server/quota.js`), so one person can't use everyone's
+  capacity. Set `UPSTASH_REDIS_REST_URL`/`TOKEN` so the counts are shared across all servers.
+  Schools on one Wi-Fi are fine: network limits are high and paying members are exempt.
+- **Cheap prompts.** Short history window + summary, retrieval of only the relevant pages of
+  study materials, and a shared prompt prefix that providers can cache.
+
+**What to set up for ~20,000 students/day (≈ 200,000 replies):**
+
+1. Groq → Settings → Billing → upgrade to the Developer (pay-as-you-go) tier (250K tokens/min
+   per model instead of 8K), then set `GROQ_TPM_LIMIT=250000`. Add a monthly spend limit.
+2. OpenRouter account → add credits → create a key → `OPENROUTER_API_KEY`. This is the overflow
+   that absorbs peaks (it routes across many GPU providers).
+3. Vercel → Storage → Upstash Redis (free tier is enough to start) → connect to the project.
+4. Vercel Pro (Hobby is for non-commercial use) — or Cloudflare Workers, which also scales.
+5. Redeploy.
+
+Rough cost: about 5,000 tokens per reply → ~1 billion tokens/day at 200,000 replies, roughly
+$80–100/day on GPT-OSS 20B and about double on 120B. Lower it with the plan limits in
+`server/quota.js`. Simulated with mock providers: 300 students asking non-stop on Groq
+Developer + OpenRouter → ~1,100 replies/min, 0 errors, median 0.3 s.
+
 ## Customer mode: plans are verified, not trusted
+
+**Owner access:** set `OWNER_KEY` on your host (24+ random letters/numbers), redeploy, then
+on the live site open Account → *Activate a purchase* and paste it. You get Max for a year on
+that browser. `PLAN_SECRET` is different — it only signs plan passes and is never typed in.
 
 The live site is built for customers only:
 
@@ -246,11 +285,16 @@ The API keys used during development were shared in chat (and the old Gemini key
 
 ## Files
 
+- `server/providers.js` — AI provider pool (Groq, OpenRouter, Cerebras, custom)
+- `server/capacity.js` — live rate-limit tracking and routing
+- `server/quota.js` — per-student fair-use limits (Upstash Redis or memory)
+
 ```
 server/node.js               Node server for Render / Railway / any VPS (npm start)
 api/ai.js + vercel.json      Vercel function + config
 worker/index.js + wrangler.jsonc  Cloudflare Worker + config
 render.yaml                  Render blueprint
+server/capacity.js           live per-model rate-limit tracking and load balancing
 server/context.js            token budget: history window, summary, material excerpts, reply size
 src/lib/context.js           what the browser sends: recent turns, relevant material excerpts
 server/ai.js                 AI backend (Groq): key, request format, stream conversion, errors, fallbacks

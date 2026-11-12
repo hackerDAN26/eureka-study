@@ -142,6 +142,16 @@ const examsFrom = (workspaces, courses, label) =>
     .map(e => ({ id: e.id, wsId: e.wsId, title: e.title, date: e.date, paper: e.paper ?? e.description ?? '', topicIds: e.topicIds, courseKey: e.courseKey ?? courses.find(c => label(c) === e.subject)?.key }))
     .filter(e => e.courseKey);
 const courseLabel = c => `${c.subject}${c.level ? ` ${c.level}` : ''}`;
+// What else this student has asked about in the same subject's chat area (titles only — cheap).
+const subjectMemory = (w, c) => {
+  if (!c.subject || c.subject === 'General') return '';
+  const titles = w.chats
+    .filter(x => x.id !== c.id && x.subject === c.subject && x.messages.length && x.title && x.title !== 'New conversation')
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 8)
+    .map(x => x.title.slice(0, 60));
+  return titles.length ? `\n- Earlier chats in this subject: ${titles.join('; ')}` : '';
+};
 
 /* ── routing ─────────────────────────────────────────────── */
 const readRoute = () => {
@@ -386,14 +396,17 @@ export default function App() {
   const tier = state.plan.tier;
   const baseLimits = PLANS[tier].limits;
 
-  const [activeChatId, setActiveChatId] = useState(null);
-  const chat = ws.chats.find(c => c.id === activeChatId) ?? ws.chats[0];
-  const isEmpty = chat.messages.length === 0;
-
   /* the student's own courses (from onboarding) */
   const profile = state.profile ?? { courses: [], onboarded: false };
   const courses = profile.courses;
   const courseByKey = useMemo(() => new Map(courses.map(c => [c.key, c])), [courses]);
+
+  // Each subject has its own chat area. 'all' shows every conversation in the workspace.
+  const area = ws.chatArea && (ws.chatArea === 'General' || courseByKey.has(ws.chatArea)) ? ws.chatArea : 'all';
+  const inArea = c => area === 'all' || c.subject === area;
+  const [activeChatId, setActiveChatId] = useState(null);
+  const chat = ws.chats.find(c => c.id === activeChatId) ?? ws.chats.find(inArea) ?? ws.chats[0];
+  const isEmpty = chat.messages.length === 0;
   const subjectLabel = (key, fallback) => {
     const c = courseByKey.get(key);
     if (!c) return fallback || key || 'General';
@@ -411,6 +424,7 @@ export default function App() {
       groups.set(g, [...(groups.get(g) ?? []), c]);
     }
     return [
+      { label: 'All chats', value: 'all' },
       { label: 'General', value: 'General' },
       ...[...groups].map(([label, list]) => ({
         label,
@@ -720,7 +734,7 @@ export default function App() {
         specLookup,
         deadlines: deadlinesSummary(w.events ?? []),
         customInstructions: limits.customTutor ? state.settings.tutorInstructions : '',
-        studentModel: studentModelText({ ...study, activeSession: study.activeSession ? { stepName: study.activeSession.session.blocks[study.activeSession.step]?.activity } : null }, courses, c.subject),
+        studentModel: studentModelText({ ...study, activeSession: study.activeSession ? { stepName: study.activeSession.session.blocks[study.activeSession.step]?.activity } : null }, courses, c.subject) + subjectMemory(w, c),
         history: historyParts,
         materials,
         webSearch,
@@ -762,7 +776,9 @@ export default function App() {
       }
       if (fellBackFrom && fallbackReason === 'plan' && !(serverPlan === 'free' && state.plan.tier !== 'free'))
         setToast(`${nameOf(fellBackFrom)} isn’t included in your plan, so ${nameOf(usedModel)} answered.`);
-      else if (fellBackFrom && (fallbackReason === 'vision' || fallbackReason === 'search'))
+      else if (fellBackFrom && fallbackReason === 'busy') {
+        /* another model had spare capacity and answered — normal, no message */
+      } else if (fellBackFrom && (fallbackReason === 'vision' || fallbackReason === 'search'))
         setToast(`${nameOf(fellBackFrom)} ${fallbackReason === 'vision' ? 'can’t read images' : 'can’t search the web'}, so ${nameOf(usedModel)} answered this one.`);
       else if (fellBackFrom)
         setToast(`${nameOf(fellBackFrom)} couldn’t answer${why ? ` (${why})` : ''} — answered with ${nameOf(usedModel)} instead.${import.meta.env.DEV ? ' Settings → Test all models shows details.' : ''}`);
@@ -883,7 +899,7 @@ export default function App() {
     const key = courseKey && courseByKey.has(courseKey) ? courseKey : 'General';
     const existing = ws.chats.find(c => c.subject === key && c.messages.length === 0);
     const target = existing ?? { ...newChat(key), subjectName: courseByKey.get(key)?.subject };
-    if (!existing) patchWs(ws.id, w => ({ ...w, chats: [target, ...w.chats] }));
+    patchWs(ws.id, w => ({ ...w, chatArea: key, chats: existing ? w.chats : [target, ...w.chats] }));
     setActiveChatId(target.id);
     setQueued({ chatId: target.id, text, title });
     go('chat');
@@ -946,8 +962,9 @@ export default function App() {
 
   const startChat = () => {
     go('chat');
-    if (isEmpty) return;
-    const c = { ...newChat(chat.subject), subjectName: chat.subjectName };
+    const subject = area === 'all' ? chat.subject : area;
+    if (isEmpty && chat.subject === subject) return;
+    const c = { ...newChat(subject), subjectName: subject === 'General' ? '' : courseByKey.get(subject)?.subject };
     patchWs(ws.id, w => ({ ...w, chats: [c, ...w.chats] }));
     setActiveChatId(c.id);
     if (window.innerWidth <= 900) setSidebar(false);
@@ -956,10 +973,41 @@ export default function App() {
   const removeChat = id => {
     patchWs(ws.id, w => {
       const chats = w.chats.filter(c => c.id !== id);
+      // Keep at least one chat in the subject area you're looking at.
+      if (area !== 'all' && !chats.some(c => c.subject === area)) chats.unshift({ ...newChat(area), subjectName: area === 'General' ? '' : courseByKey.get(area)?.subject });
       return { ...w, chats: chats.length ? chats : [newChat()] };
     });
     resources.current.delete(id);
     if (id === chat.id) setActiveChatId(null);
+  };
+
+  // Open a subject's chat area: its most recent chat, or a fresh one if it has none yet.
+  const openArea = value => {
+    go('chat');
+    if (value === 'all') {
+      patchWs(ws.id, w => ({ ...w, chatArea: 'all' }));
+      return;
+    }
+    const subjectName = value === 'General' ? '' : courseByKey.get(value)?.subject;
+    const latest = [...ws.chats].filter(c => c.subject === value).sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (latest) {
+      patchWs(ws.id, w => ({ ...w, chatArea: value }));
+      setActiveChatId(latest.id);
+    } else if (isEmpty) {
+      patchWs(ws.id, w => ({ ...w, chatArea: value, chats: w.chats.map(c => (c.id === chat.id ? { ...c, subject: value, subjectName } : c)) }));
+    } else {
+      const c = { ...newChat(value), subjectName };
+      patchWs(ws.id, w => ({ ...w, chatArea: value, chats: [c, ...w.chats] }));
+      setActiveChatId(c.id);
+    }
+    if (window.innerWidth <= 900) setSidebar(false);
+  };
+
+  // Move the open chat to another subject; the view follows it.
+  const moveChat = value => {
+    const subjectName = value === 'General' ? '' : subjectLabel(value);
+    patchWs(ws.id, w => ({ ...w, chatArea: w.chatArea && w.chatArea !== 'all' ? value : w.chatArea, chats: w.chats.map(c => (c.id === chat.id ? { ...c, subject: value, subjectName } : c)) }));
+    setActiveChatId(chat.id);
   };
 
   /* ── workspaces ── */
@@ -1015,13 +1063,15 @@ export default function App() {
   const sorted = useMemo(() => {
     const q = query.trim().toLowerCase();
     const list = ws.chats.filter(
-      c => !q || c.title.toLowerCase().includes(q) || subjectLabel(c.subject, c.subjectName).toLowerCase().includes(q) || c.messages.some(m => m.text?.toLowerCase().includes(q))
+      c => (q ? true : inArea(c)) && (!q || c.title.toLowerCase().includes(q) || subjectLabel(c.subject, c.subjectName).toLowerCase().includes(q) || c.messages.some(m => m.text?.toLowerCase().includes(q)))
     );
     list.sort((a, b) => b.updatedAt - a.updatedAt);
     return { pinned: list.filter(c => c.pinned), recent: list.filter(c => !c.pinned) };
-  }, [ws.chats, query, courseByKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ws.chats, query, courseByKey, area]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const subjectSection = subjectItems.findIndex(s => s.children?.some(k => k.value === chat.subject));
+  const subjectSection = subjectItems.findIndex(s => s.children?.some(k => k.value === area));
+  const areaName = area === 'all' ? '' : subjectLabel(area);
+  const areaCount = key => ws.chats.filter(c => c.subject === key && c.messages.length).length;
   const upcomingCount = (ws.events ?? []).filter(e => !e.done && dueOf(e) > now - 86400e3).length;
 
   const renderRow = c => (
@@ -1046,6 +1096,7 @@ export default function App() {
           className="chat-row__main"
           onClick={() => {
             setActiveChatId(c.id);
+            if (area !== 'all' && c.subject !== area) patchWs(ws.id, w => ({ ...w, chatArea: c.subject }));
             go('chat');
             if (window.innerWidth <= 900) setSidebar(false);
           }}
@@ -1070,7 +1121,7 @@ export default function App() {
   );
 
   const prompts = [...DEFAULT_PROMPTS, ...state.prompts];
-  const crumbs = route === 'study' ? ['Revision', { today: 'Today', plan: 'Timetable', topics: 'Topics', practice: 'Exam practice', cards: 'Flashcards', analytics: 'Analytics', coach: 'Coach', roadmap: 'Roadmap' }[studyTab]] : route === 'calendar' ? ['Exam Calendar'] : route === 'chat' ? ['AI Conversations', chat.title] : [route === 'terms' ? 'Terms & Conditions' : 'Privacy Policy'];
+  const crumbs = route === 'study' ? ['Revision', { today: 'Today', plan: 'Timetable', topics: 'Topics', practice: 'Exam practice', cards: 'Flashcards', analytics: 'Analytics', coach: 'Coach', roadmap: 'Roadmap' }[studyTab]] : route === 'calendar' ? ['Exam Calendar'] : route === 'chat' ? ['AI Conversations', ...(areaName ? [areaName] : []), chat.title] : [route === 'terms' ? 'Terms & Conditions' : 'Privacy Policy'];
 
   return (
     <div className="app" data-sidebar={sidebar ? '' : undefined} data-runner={study.activeSession && !study.activeSession.min ? '' : undefined}>
@@ -1119,7 +1170,7 @@ export default function App() {
         </nav>
 
         <button type="button" className="new-chat" onClick={startChat}>
-          <Icon icon={Add01Icon} size={15} stroke={2} /> New conversation
+          <Icon icon={Add01Icon} size={15} stroke={2} /> {areaName ? `New ${areaName} chat` : 'New conversation'}
         </button>
 
         <label className="search">
@@ -1131,18 +1182,18 @@ export default function App() {
           {route === 'chat' ? (
             <>
               <div className="side-label side-label--row">
-                Subject context
+                Subjects
                 <button type="button" className="link-btn" onClick={() => setSubjectsOpen(true)}>
                   {courses.length ? 'Edit' : 'Add subjects'}
                 </button>
               </div>
               <div className="subjects">
                 <BranchedMenu
-                  key={`${chat.id}:${courses.map(c => c.key).join(',')}`}
-                  items={subjectItems}
-                  defaultOpen={subjectSection >= 0 ? [subjectSection] : -1}
-                  defaultActive={chat.subject}
-                  onSelect={value => patchChat(ws.id, chat.id, x => ({ ...x, subject: value, subjectName: value === 'General' ? '' : subjectLabel(value) }))}
+                  key={`${area}:${courses.map(c => c.key).join(',')}`}
+                  items={subjectItems.map(it => (it.children ? { ...it, children: it.children.map(k => ({ ...k, label: areaCount(k.value) ? `${k.label} · ${areaCount(k.value)}` : k.label })) } : it.value === 'General' && areaCount('General') ? { ...it, label: `General · ${areaCount('General')}` } : it))}
+                  defaultOpen={subjectItems.flatMap((it, i) => (it.children ? [i] : []))}
+                  defaultActive={area}
+                  onSelect={openArea}
                   color={C.text}
                   accentColor={C.emerald}
                   lineColor={C.line}
@@ -1160,9 +1211,9 @@ export default function App() {
               {sorted.pinned.map(renderRow)}
             </>
           ) : null}
-          <div className="side-label">Conversations</div>
+          <div className="side-label">{query.trim() ? 'Search results' : areaName ? `${areaName} chats` : 'Conversations'}</div>
           {sorted.recent.map(renderRow)}
-          {sorted.pinned.length + sorted.recent.length === 0 ? <div className="side-empty">No chats match “{query}”</div> : null}
+          {sorted.pinned.length + sorted.recent.length === 0 ? <div className="side-empty">{query.trim() ? `No chats match “${query}”` : `No ${areaName || ''} chats yet`}</div> : null}
         </div>
 
         {season ? (
@@ -1279,9 +1330,18 @@ export default function App() {
             ))}
           </nav>
           {route === 'chat' ? (
-            <span className="subject-pill">
+            <label className="subject-pill subject-pill--select" title="Move this chat to another subject">
               <Icon icon={Book02Icon} size={13} /> {chat.subject === 'General' ? 'General' : subjectLong(chat.subject)}
-            </span>
+              <select aria-label="Subject for this chat" value={chat.subject === 'General' || courseByKey.has(chat.subject) ? chat.subject : ''} onChange={e => e.target.value && moveChat(e.target.value)}>
+                {chat.subject !== 'General' && !courseByKey.has(chat.subject) ? <option value="">{chatLabel}</option> : null}
+                <option value="General">General</option>
+                {courses.map(c => (
+                  <option key={c.key} value={c.key}>
+                    {subjectLabel(c.key)}
+                  </option>
+                ))}
+              </select>
+            </label>
           ) : null}
           <Bell
             items={reminders}

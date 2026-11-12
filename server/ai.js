@@ -14,6 +14,9 @@
 //   GET  /health   → is the key configured? ?test=1 makes a real request; ?test=all tests every model
 //   POST /auth     → verifies a Google sign-in credential with Google
 //   GET  /catalog  → qualifications, boards and subject names for onboarding (no spec codes)
+import { available, block, byCapacity, observe, reserve, waitFor } from './capacity.js';
+import { adaptBody, defaultTpm, providersFrom, slotsFor } from './providers.js';
+import { checkQuota } from './quota.js';
 import { budgetFor, est, fitChat, learnLimit, outputFor, tpmFor } from './context.js';
 import { courseInstruction, publicCatalog, resolveCourse } from './specs.js';
 
@@ -68,10 +71,12 @@ const MESSAGES = {
   license_other: 'That license key is for a different product, not a EUREKA plan.',
   billing_not_setup: 'Plan activation isn’t set up on this site yet. Please contact eurekasofficial@gmail.com.',
   billing_error: 'We couldn’t check your purchase with Whop just now. Please try again in a minute.',
+  daily_limit: 'You’ve used today’s AI allowance on your plan. It resets at midnight (UTC) — or upgrade for more.',
   failed: 'The AI request failed.'
 };
 
 const STATUS = {
+  daily_limit: 429,
   license_invalid: 404,
   license_inactive: 402,
   license_other: 400,
@@ -160,7 +165,6 @@ function rateLimited(ip, limit, windowMs = 60_000) {
 
 /* ── tutor prompt (kept server-side) ─────────────────── */
 const tutorInstruction = (subject, deadlines, custom, courses) => `You are EUREKA, a calm, expert study tutor for secondary and pre-university students (GCSE, IGCSE, A-Level, IB, AP and similar).
-${courses || (subject ? `The student is currently studying: ${subject}. Frame examples and terminology for this subject unless they ask otherwise.` : '')}
 
 How you teach:
 - Be a tutor, not an answer machine. For homework, coursework or assignment questions, do not hand over a finished answer: explain the idea, give a worked example on a *different* problem, then ask a guiding question or offer a hint so the student does the final step.
@@ -169,6 +173,8 @@ How you teach:
 - When quizzing, ask one question at a time and wait for the answer, then mark it and explain mistakes.
 - When the student attaches materials, ground answers in them and cite where it came from, e.g. "(Slide 12)" or "(p. 4)" or "(section 2.3)". If something isn't in the material, say so.
 - End most replies with one short follow-up the student could take (a check-question, a next topic, or an offer).
+
+${courses || (subject ? `The student is currently studying: ${subject}. Frame examples and terminology for this subject unless they ask otherwise.` : '')}
 ${deadlines ? deadlinesInstruction(deadlines) : ''}
 ${custom ? customInstruction(custom) : ''}`;
 const deadlinesInstruction = d =>
@@ -273,14 +279,16 @@ const buildBody = ({ system, contents, level, search, maxTokens = 8192 }, varian
   return body;
 };
 
-async function callGroq({ base, key, model, body, stream, signal }) {
-  return fetch(`${base}/chat/completions`, {
+async function callProvider(slot, body, stream, signal) {
+  const { provider } = slot;
+  return fetch(`${provider.base}/chat/completions`, {
     method: 'POST',
-    headers: { 'content-type': 'application/json', authorization: `Bearer ${key}`, accept: stream ? 'text/event-stream' : 'application/json' },
-    body: JSON.stringify({ ...body, model, stream }),
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${provider.key}`, accept: stream ? 'text/event-stream' : 'application/json', ...provider.headers },
+    body: JSON.stringify({ ...body, model: slot.remote, stream }),
     signal
   });
 }
+
 
 const RANKED = FALLBACK_MODELS.map(m => m.key);
 const sleep = (ms, signal) =>
@@ -302,7 +310,12 @@ const fallbackFor = model => {
 };
 const FATAL = new Set(['invalid_key', 'no_key', 'no_credits', 'blocked', 'too_large']);
 
-async function generate({ base, key, model, level, stream, signal, make, noFallback = false, hasTools = false, needsVision = false, needsSearch = false }) {
+// Rough size of a request in Groq's rate-limit terms: input tokens + reserved reply.
+const sizeOf = body => Math.ceil(JSON.stringify(body.messages ?? []).length / 3.8) + (body.max_completion_tokens ?? 1024);
+const MAX_WAIT_MS = 20_000; // longest a request waits for a busy model to free up
+
+async function generate({ base, key, providers, env, model, level, stream, signal, make, noFallback = false, hasTools = false, needsVision = false, needsSearch = false, overflow = false }) {
+  providers = providers?.length ? providers : providersFrom(() => '', { key, base });
   const requested = ALLOWED.has(model) || CAPS.has(model) ? model : DEFAULT_MODEL;
   // Images need a vision model; web/spec searches need a model with browser search.
   let first = requested;
@@ -311,73 +324,127 @@ async function generate({ base, key, model, level, stream, signal, make, noFallb
   else if (needsSearch && !caps(first).search) [first, routed] = [SEARCH_MODEL, 'search'];
   let queue = noFallback ? [first] : [first, ...fallbackFor(first).filter(m => m !== first)];
   if (needsVision && !noFallback) queue = [...new Set([first, ...VISION_MODELS])];
+  // Overflow: when the student's models are full, borrow another model's allowance.
+  const borrowedModels = new Set();
+  if (overflow && !noFallback)
+    for (const m of RANKED.flatMap(r => [r, ...(ALIASES[r] ?? [])]))
+      if (!queue.includes(m) && (!needsVision || caps(m).vision)) {
+        queue.push(m);
+        borrowedModels.add(m);
+      }
+  // Each model at each provider is a separate "slot" with its own rate limit. Images and
+  // Groq's web search only work on Groq; other providers answer without search if needed.
+  let slots = queue.flatMap(m => slotsFor(m, providers)).filter(sl => !needsVision || sl.provider.id === 'groq');
+  if (noFallback) slots = slots.filter(sl => sl.provider.id === 'groq').slice(0, 1);
   model = requested;
   const tried = [];
+  const gone = new Set(); // slot keys / provider ids that can't serve this request
+  const usable = sl => !gone.has(sl.key) && !gone.has(sl.provider.id);
   let lastErr = null;
-  let searchDropped = false;
-  for (const current of queue) {
-    let variant = 0;
-    let lvl = level;
-    let retried = false;
-    let squeeze = 0;
-    let waited = false;
-    for (let attempt = 0; attempt < 7; attempt++) {
-      if (signal?.aborted) return { aborted: true };
-      let res;
-      try {
-        res = await callGroq({ base, key, model: current, body: make(lvl, variant, current, squeeze), stream, signal });
-      } catch (e) {
+  const started = Date.now();
+  const bodyFor = (sl, lvl, variant, squeeze) => adaptBody(make(lvl, variant, sl.model, squeeze, sl), sl.provider, variant);
+  const needOf = sl => sizeOf(bodyFor(sl, level, 0, 0));
+  const byKey = new Map(slots.map(sl => [sl.key, sl]));
+
+  for (let pass = 0; pass < 3; pass++) {
+    const order = byCapacity(slots.filter(usable).map(sl => sl.key), k => needOf(byKey.get(k))).map(k => byKey.get(k));
+    let sawBusy = false;
+    for (const slot of order) {
+      if (!usable(slot)) continue;
+      const borrowed = borrowedModels.has(slot.model);
+      // Reach for a borrowed model or a backup provider only when it actually has room.
+      if ((borrowed || slot.provider.id !== 'groq') && available(slot.key) < needOf(slot)) continue;
+      let variant = 0;
+      let lvl = level;
+      let retried = false;
+      let squeeze = 0;
+      let next = false;
+      for (let attempt = 0; attempt < 6 && !next; attempt++) {
         if (signal?.aborted) return { aborted: true };
-        return { error: 'upstream_unreachable', detail: String(e?.message ?? e).slice(0, 200), model: current, tried };
-      }
-      if (res.ok) return { res, model: current, fellBackFrom: current === model ? null : model, reason: tried.at(-1)?.kind ?? routed, searchDropped: hasTools && (variant >= 2 || !caps(current).search), tried, squeeze };
-      const err = await readError(res);
-      const kind = classify(err);
-      const retryAfter = err.retryAfter ?? retryHint(err.message);
-      lastErr = { kind: kind === 'thinking' ? 'bad_request' : kind, detail: err.message, retryAfter, model: current };
-      console.error(`[ai] ${current} → ${res.status} ${kind}: ${err.message}`);
-      // Too large for the model's per-minute token limit: learn the real limit, shrink the
-      // context (fewer turns, shorter excerpts, smaller reply reservation) and retry.
-      if (kind === 'too_large' && squeeze < 2) {
-        learnLimit(current, err.message);
-        squeeze += 1;
-        continue;
-      }
-      // Rate limit with a short wait: wait it out once, then retry the same model.
-      if (kind === 'quota') {
-        learnLimit(current, err.message);
-        if (!waited && retryAfter != null && retryAfter <= 8) {
-          waited = true;
-          await sleep(retryAfter * 1000 + 250, signal);
+        const body = bodyFor(slot, lvl, variant, squeeze);
+        reserve(slot.key, sizeOf(body));
+        let res;
+        try {
+          res = await callProvider(slot, body, stream, signal);
+        } catch (e) {
           if (signal?.aborted) return { aborted: true };
+          lastErr = { kind: 'upstream_unreachable', detail: String(e?.message ?? e).slice(0, 200), model: slot.model };
+          gone.add(slot.provider.id); // provider unreachable: try the others
+          next = true;
+          break;
+        }
+        observe(slot.key, res.headers);
+        if (res.ok) {
+          const reason = slot.model === model ? null : borrowed || (tried.at(-1)?.kind === 'quota' && !routed) ? 'busy' : (tried.at(-1)?.kind ?? routed);
+          return {
+            res,
+            model: slot.model,
+            provider: slot.provider.id,
+            fellBackFrom: slot.model === model ? null : model,
+            reason,
+            searchDropped: hasTools && (variant >= 2 || !caps(slot.model).search || slot.provider.id !== 'groq'),
+            tried,
+            squeeze
+          };
+        }
+        const err = await readError(res);
+        const kind = classify(err);
+        const retryAfter = err.retryAfter ?? retryHint(err.message);
+        lastErr = { kind: kind === 'thinking' ? 'bad_request' : kind, detail: err.message, retryAfter, model: slot.model };
+        console.error(`[ai] ${slot.provider.id}:${slot.remote} → ${res.status} ${kind}: ${err.message}`);
+        if (kind === 'too_large' && squeeze < 2) {
+          learnLimit(slot.key, err.message);
+          squeeze += 1;
           continue;
         }
-        break; // other models have their own limits
+        if (kind === 'quota') {
+          learnLimit(slot.key, err.message);
+          block(slot.key, retryAfter ?? 10);
+          sawBusy = true;
+          next = true;
+          break;
+        }
+        // A provider's key/billing problem only takes that provider out of the pool.
+        if (['invalid_key', 'no_key', 'no_credits', 'forbidden'].includes(kind) && providers.length > 1) {
+          gone.add(slot.provider.id);
+          next = true;
+          break;
+        }
+        if (FATAL.has(kind)) return { error: kind, detail: err.message, retryAfter, model: slot.model, tried };
+        if (kind === 'thinking' && lvl) {
+          lvl = null;
+          continue;
+        }
+        if (hasTools && variant < 2 && ['bad_request', 'forbidden'].includes(kind)) {
+          variant = kind === 'bad_request' && variant === 0 ? 1 : 2;
+          continue;
+        }
+        if (kind === 'bad_request' && variant < 2) {
+          variant = 2;
+          continue;
+        }
+        if (kind === 'unavailable' && !retried) {
+          retried = true;
+          await sleep(800, signal);
+          continue;
+        }
+        gone.add(slot.key);
+        next = true;
       }
-      if (FATAL.has(kind)) return { error: kind, detail: err.message, retryAfter, model: current, tried };
-      if (kind === 'thinking' && lvl) {
-        lvl = null;
-        continue;
-      }
-      if (hasTools && variant < 2 && ['bad_request', 'forbidden'].includes(kind)) {
-        variant = kind === 'bad_request' && variant === 0 ? 1 : 2;
-        searchDropped = variant === 2;
-        continue;
-      }
-      if (kind === 'bad_request' && variant < 2) {
-        variant = 2;
-        continue;
-      }
-      if (kind === 'unavailable' && !retried) {
-        retried = true;
-        await new Promise(r => setTimeout(r, 800));
-        continue;
-      }
-      break; // next model
+      tried.push({ model: slot.model, provider: slot.provider.id, kind: lastErr?.kind, detail: lastErr?.detail });
     }
-    tried.push({ model: current, kind: lastErr?.kind, detail: lastErr?.detail });
+    // Everything was full: wait briefly for the first slot to free up, then go again.
+    const candidates = slots.filter(usable);
+    if (!candidates.length) break;
+    if (!sawBusy && !candidates.some(sl => available(sl.key) < needOf(sl))) break;
+    const wait = Math.min(...candidates.map(sl => waitFor(sl.key, needOf(sl))));
+    if (!Number.isFinite(wait) || Date.now() - started + wait > MAX_WAIT_MS) {
+      lastErr = { ...(lastErr ?? { kind: 'quota' }), kind: 'quota', retryAfter: Math.max(1, Math.ceil((Number.isFinite(wait) ? wait : 30_000) / 1000)) };
+      break;
+    }
+    await sleep(wait + 300, signal);
+    if (signal?.aborted) return { aborted: true };
   }
-  void searchDropped;
   return { error: lastErr?.kind ?? 'failed', detail: lastErr?.detail, retryAfter: lastErr?.retryAfter, model: lastErr?.model, tried };
 }
 
@@ -461,6 +528,8 @@ function toAppStream(body) {
     if (choice?.finish_reason) {
       const rest = strip('', true);
       if (rest) controller.enqueue(textChunk(rest));
+      // Replies are kept short when the AI's rate limit is small; say how to get the rest.
+      if (choice.finish_reason === 'length') controller.enqueue(textChunk('\n\n_…I kept that short so everyone can use EUREKA at once — say **continue** for the rest._'));
       finish(controller);
     }
   };
@@ -554,10 +623,18 @@ export async function verifyPlan(env, token) {
 
 // The plan a request is allowed to use. Developer preview (npm run dev only) can pick any plan.
 async function planOf(request, env) {
+  return (await planInfo(request, env)).tier;
+}
+async function planInfo(request, env) {
   const dev = request.headers.get('x-eureka-dev-plan');
-  if (dev && env('EUREKA_DEV_PLANS') === '1' && PLAN_RANK[dev] !== undefined) return dev;
+  if (dev && env('EUREKA_DEV_PLANS') === '1' && PLAN_RANK[dev] !== undefined) return { tier: dev, member: null };
   const pass = await verifyPlan(env, request.headers.get('x-eureka-plan'));
-  return pass?.tier ?? 'free';
+  return { tier: pass?.tier ?? 'free', member: pass?.mem || null };
+}
+// Fair use (server/quota.js): per-student daily ceiling + per-minute burst limit.
+async function fairUse(request, ctx, info) {
+  const q = await checkQuota(ctx.env, { plan: info.tier, member: info.member, device: request.headers.get('x-eureka-device'), ip: ctx.ip });
+  return q.ok ? null : fail(q.kind, { retryAfter: q.retryAfter });
 }
 
 function whopPlans(env) {
@@ -572,6 +649,16 @@ function whopPlans(env) {
   return map;
 }
 
+// OWNER_KEY as set on the host, without stray quotes or spaces pasted into the dashboard.
+const ownerKey = env => String(env('OWNER_KEY') ?? '').replace(/^["'`\s]+|["'`\s]+$/g, '');
+
+// Compares secrets without leaking how many characters matched.
+function sameText(a, b) {
+  let diff = a.length ^ b.length;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) diff |= (a.charCodeAt(i) || 0) ^ (b.charCodeAt(i) || 0);
+  return diff === 0;
+}
+
 async function activate(request, env, ip) {
   if (rateLimited(`license:${ip}`, 8)) return fail('rate_limited', { retryAfter: 60 });
   let input = {};
@@ -579,6 +666,13 @@ async function activate(request, env, ip) {
     input = JSON.parse((await request.text()).slice(0, 2000));
   } catch {}
   const licenseKey = String(input.licenseKey ?? '').trim();
+  // Site owner: typing OWNER_KEY (set on your host, 24+ characters) unlocks Max for a year.
+  const owner = ownerKey(env);
+  if (owner.length >= 24 && sameText(licenseKey.replace(/^["'`\s]+|["'`\s]+$/g, ''), owner)) {
+    const exp = Date.now() + 365 * DAY;
+    const token = await signPlan(env, { tier: 'max', billing: 'yearly', mem: 'owner', exp });
+    return json(200, { tier: 'max', billing: 'yearly', until: exp, membership: 'owner', token });
+  }
   if (!/^[A-Za-z0-9_-]{6,120}$/.test(licenseKey)) return fail('license_invalid');
   const apiKey = env('WHOP_API_KEY');
   if (!apiKey) return fail('billing_not_setup');
@@ -647,7 +741,10 @@ async function chat(request, ctx) {
   const contents = cleanHistory(input.history);
   if (!contents) return fail('bad_request', { detail: 'history must be a list of messages ending with the student’s message.' });
 
-  const plan = await planOf(request, ctx.env);
+  const info = await planInfo(request, ctx.env);
+  const plan = info.tier;
+  const blocked = await fairUse(request, ctx, info);
+  if (blocked) return blocked;
   let requested = typeof input.model === 'string' && MODEL_ID.test(input.model) ? input.model : PLAN_BEST[plan];
   let planLimited = null;
   if (PLAN_RANK[tierOfModel(requested)] > PLAN_RANK[plan]) [planLimited, requested] = [requested, PLAN_BEST[plan]];
@@ -673,9 +770,10 @@ async function chat(request, ctx) {
     hasTools: Boolean(search),
     needsVision: hasImages(contents),
     needsSearch: Boolean(search),
-    make: (level, variant, model, squeeze = 0) => {
+    overflow: true,
+    make: (level, variant, model, squeeze = 0, slot = null) => {
       // Web search adds result text to the request, so leave more headroom for it.
-      const fit = fitChat({ sections, contents, materials, tpm: tpmFor(model, ctx.env), squeeze: Math.min(2, squeeze + (search && caps(model).search ? 1 : 0)), desiredOutput: level === 'high' ? 3000 : 2048 });
+      const fit = fitChat({ sections, contents, materials, tpm: tpmFor(slot?.key ?? model, ctx.env, slot && defaultTpm(slot.provider)), squeeze: Math.min(2, squeeze + (search && caps(model).search && (!slot || slot.provider.id === 'groq') ? 1 : 0)), desiredOutput: level === 'high' ? 3000 : 2048 });
       report = fit.report;
       return buildBody({ system: fit.system, contents: fit.contents, level, search, maxTokens: fit.maxOutput }, variant, model);
     }
@@ -689,6 +787,7 @@ async function chat(request, ctx) {
     'content-type': 'text/event-stream; charset=utf-8',
     'cache-control': 'no-store',
     'x-eureka-model': out.model,
+    'x-eureka-provider': out.provider ?? 'groq',
     'x-eureka-plan': plan
   };
   if (report) headers['x-eureka-context'] = `kept=${report.kept};summarised=${report.summarised};materials=${report.materials};input=${report.input};squeeze=${report.squeeze}`;
@@ -770,7 +869,10 @@ async function task(request, ctx) {
   const site = kind === 'topics' ? resolveCourse(input.course)?.site : '';
   const search = kind === 'topics' && site ? { site } : null;
   const system = [TASK_SYSTEM, courses, studentInstruction(str(input.studentModel, 1600))].filter(Boolean).join('\n\n');
-  const plan = await planOf(request, ctx.env);
+  const info = await planInfo(request, ctx.env);
+  const plan = info.tier;
+  const blocked = await fairUse(request, ctx, info);
+  if (blocked) return blocked;
   let requested = typeof input.model === 'string' && MODEL_ID.test(input.model) ? input.model : PLAN_BEST[plan];
   if (PLAN_RANK[tierOfModel(requested)] > PLAN_RANK[plan]) requested = PLAN_BEST[plan];
   const prompt = TASKS[kind](args);
@@ -785,8 +887,9 @@ async function task(request, ctx) {
       signal: request.signal,
       hasTools: Boolean(search),
       needsSearch: Boolean(search),
-      make: (level, variant, model, squeeze = 0) => {
-        const budget = budgetFor(tpmFor(model, ctx.env), { squeeze, desiredOutput: TASK_OUTPUT[kind] });
+      overflow: true,
+      make: (level, variant, model, squeeze = 0, slot = null) => {
+        const budget = budgetFor(tpmFor(slot?.key ?? model, ctx.env, slot && defaultTpm(slot.provider)), { squeeze, desiredOutput: TASK_OUTPUT[kind] });
         const sys = squeeze ? [TASK_SYSTEM, courses].filter(Boolean).join('\n\n') : system;
         const used = est(sys) + est(contents[0].parts[0].text) + 20;
         return buildBody({ system: sys, contents, level, search, maxTokens: outputFor(budget, used) }, variant, model);
@@ -910,6 +1013,7 @@ export async function handleAI(request, getEnv, meta = {}) {
   const url = new URL(request.url);
   // Hosts that rewrite /api/ai/<route> to one function pass the route as ?__route= (Vercel).
   const route = (url.searchParams.get('__route') ?? url.pathname.replace(/^.*\/api\/ai\/?/, '')).replace(/^\/|\/$/g, '');
+  const ip = meta.ip || request.headers.get('x-nf-client-connection-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local';
   const found = findKey(env);
   if (found.key && found.from !== 'GROQ_API_KEY') console.warn(`[ai] Using the Groq key from ${found.from}. Rename the variable to GROQ_API_KEY when you can.`);
   const ctx = {
@@ -917,13 +1021,16 @@ export async function handleAI(request, getEnv, meta = {}) {
     keyFrom: found.from,
     noKey: noKeyDetail(found),
     env,
+    ip,
+    providers: providersFrom(env, { key: found.key, base: (env('GROQ_API_BASE') || 'https://api.groq.com/openai/v1').replace(/\/$/, '') }),
     base: (env('GROQ_API_BASE') || 'https://api.groq.com/openai/v1').replace(/\/$/, '')
   };
 
   if (!originAllowed(request, env('ALLOWED_ORIGINS'))) return fail('forbidden_origin');
 
-  const ip = meta.ip || request.headers.get('x-nf-client-connection-ip') || request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() || 'local';
-  const perMinute = parseInt(env('RATE_LIMIT_PER_MINUTE'), 10) || 30;
+  // Last-line flood guard per network address. Per-student fair use lives in quota.js, so this is
+// set high enough that a whole school on one Wi-Fi isn't blocked.
+  const perMinute = parseInt(env('RATE_LIMIT_PER_MINUTE'), 10) || 600;
 
   if (route === 'health' && request.method === 'GET') {
     // Connection tests spend real AI requests, so they're for the site owner only:
@@ -935,7 +1042,7 @@ export async function handleAI(request, getEnv, meta = {}) {
     }
     if (url.searchParams.get('test') && rateLimited(`test:${ip}`, 6)) return fail('rate_limited', { retryAfter: 60 });
     if (url.searchParams.get('test') === 'all') {
-      if (!ctx.key) return fail('no_key', { detail: ctx.noKey });
+      if (!ctx.providers.length) return fail('no_key', { detail: ctx.noKey });
       return testAll(request, ctx);
     }
     return health(request, ctx, env);
@@ -946,7 +1053,7 @@ export async function handleAI(request, getEnv, meta = {}) {
   }
   if (route === 'catalog' && request.method === 'GET')
     return json(200, publicCatalog(), { 'cache-control': 'public, max-age=3600' });
-  if (!ctx.key) return fail('no_key', { detail: ctx.noKey });
+  if (!ctx.providers.length) return fail('no_key', { detail: ctx.noKey });
   if (route === 'models' && request.method === 'GET') return models(ctx);
   if (route === 'chat' && request.method === 'POST') {
     if (rateLimited(`chat:${ip}`, perMinute)) return fail('rate_limited', { retryAfter: 60 });
@@ -955,7 +1062,7 @@ export async function handleAI(request, getEnv, meta = {}) {
   if (route === 'plan' && request.method === 'POST') return activate(request, env, ip);
   if (route === 'plan' && request.method === 'GET') {
     const pass = await verifyPlan(env, request.headers.get('x-eureka-plan'));
-    return json(200, { tier: pass?.tier ?? 'free', billing: pass?.billing ?? null, until: pass?.exp ?? null, billingSetUp: Boolean(env('WHOP_API_KEY')) });
+    return json(200, { tier: pass?.tier ?? 'free', billing: pass?.billing ?? null, until: pass?.exp ?? null, billingSetUp: Boolean(env('WHOP_API_KEY')), ownerKeySet: ownerKey(env).length >= 24, version: 'owner-2' });
   }
   if (route === 'task' && request.method === 'POST') {
     if (rateLimited(`chat:${ip}`, perMinute)) return fail('rate_limited', { retryAfter: 60 });

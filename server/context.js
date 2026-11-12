@@ -34,8 +34,12 @@ const clipTokens = (text, tokens, tail = 0) => {
 // Learned from Groq's own error messages ("Limit 8000, Requested 8886"), so EUREKA adapts
 // automatically when the account moves to a higher tier (or a model has a lower limit).
 const learned = new Map();
-export function tpmFor(model, env) {
-  return learned.get(model) ?? (Number(env?.('GROQ_TPM_LIMIT')) || DEFAULT_TPM);
+// key: a model ("openai/gpt-oss-20b") or a provider slot ("openrouter|openai/gpt-oss-20b").
+export function tpmFor(key, env, fallback = null) {
+  return learned.get(key) ?? (String(key).startsWith('groq|') || !String(key).includes('|') ? Number(env?.('GROQ_TPM_LIMIT')) || DEFAULT_TPM : fallback ?? DEFAULT_TPM);
+}
+export function setLimit(model, limit) {
+  if (Number.isFinite(limit) && limit > 0) learned.set(model, limit);
 }
 export function learnLimit(model, message) {
   const m = /tokens per minute[^]*?Limit\s*:?\s*(\d+)/i.exec(String(message ?? '')) || /TPM\)?:?\s*Limit\s*:?\s*(\d+)/i.exec(String(message ?? ''));
@@ -43,12 +47,24 @@ export function learnLimit(model, message) {
   return m ? Number(m[1]) : null;
 }
 
+// Small per-minute allowances (Groq's free plan: 8,000) are shared by everyone using the
+// site, so each request is kept lean there: ~2,600 input + ~1,100 reply ≈ 3,700 tokens,
+// which lets a model take two replies in the same minute instead of one. With a paid plan
+// (250,000 TPM, learned from Groq's headers) the full budget is used.
+export const LEAN_TPM = 12_000;
+const LEAN_INPUT = 2600;
+export const isLean = tpm => tpm <= LEAN_TPM;
+
 // How many input tokens may be used, and how many reply tokens to reserve.
 export function budgetFor(tpm, { squeeze = 0, desiredOutput = 2048 } = {}) {
+  const lean = isLean(tpm);
   const usable = Math.max(1500, tpm - SAFETY);
-  const minOut = 700;
-  const input = Math.floor(Math.min(INPUT_BUDGET, usable - minOut) * [1, 0.65, 0.45][Math.min(squeeze, 2)]);
-  return { input, usable, desiredOutput, minOut };
+  const minOut = lean ? 600 : 700;
+  const cap = lean ? LEAN_INPUT : INPUT_BUDGET;
+  const scale = (lean ? [1, 0.75, 0.55] : [1, 0.65, 0.45])[Math.min(squeeze, 2)];
+  const input = Math.floor(Math.min(cap, usable - minOut) * scale);
+  const out = lean ? Math.min(desiredOutput, desiredOutput >= 2500 ? 1600 : 1100) : desiredOutput;
+  return { input, usable, desiredOutput: out, minOut, lean };
 }
 export function outputFor(budget, inputTokens) {
   return Math.max(budget.minOut, Math.min(budget.desiredOutput, budget.usable - inputTokens));
@@ -142,11 +158,12 @@ export function materialsBlock(materials, maxTokens) {
 // (last item = the student's new message) · materials: see above.
 export function fitChat({ sections, contents, materials, tpm, squeeze = 0, desiredOutput = 2048 }) {
   const budget = budgetFor(tpm, { squeeze, desiredOutput });
+  const level = Math.min(2, squeeze + (budget.lean ? 1 : 0));
   const caps = [
     { student: 650, deadlines: 260, custom: 380, latest: 2600, materials: 2300, summary: 520, recent: MAX_RECENT, reply: 900 },
     { student: 380, deadlines: 140, custom: 250, latest: 1700, materials: 1200, summary: 320, recent: 6, reply: 550 },
     { student: 220, deadlines: 80, custom: 160, latest: 1100, materials: 600, summary: 200, recent: 4, reply: 350 }
-  ][Math.min(squeeze, 2)];
+  ][level];
 
   const base = sections.base ?? '';
   // Each optional section is clipped first, then wrapped in its instructions.
@@ -156,7 +173,7 @@ export function fitChat({ sections, contents, materials, tpm, squeeze = 0, desir
   // The new message: images only on this turn, very long pastes clipped (head + tail).
   const last = contents.at(-1);
   const images = last.parts.filter(p => p.inline_data?.mime_type?.startsWith('image/'));
-  const maxImages = squeeze ? 2 : 4;
+  const maxImages = level ? 2 : 4;
   const latestParts = [
     ...last.parts.filter(p => p.text !== undefined).map(p => ({ text: clipTokens(p.text, caps.latest, 300) })),
     ...images.slice(0, maxImages),
@@ -164,6 +181,9 @@ export function fitChat({ sections, contents, materials, tpm, squeeze = 0, desir
   ];
   if (images.length > maxImages) latestParts.unshift({ text: `[${images.length - maxImages} more image(s) were attached but left out to stay within limits — ask the student to send them separately if needed.]` });
 
+  // In lean mode an image would use up most of the budget; give it its own room so the
+  // recent conversation still fits (the total stays well inside the per-minute limit).
+  if (budget.lean) budget.input = Math.min(budget.usable - budget.minOut, budget.input + IMAGE_TOKENS * Math.min(images.length, maxImages));
   let used = est(base) + extra.reduce((a, s) => a + est(s), 0) + tokensOf([{ parts: latestParts }]) + 12;
 
   const fixedUsed = used;
@@ -171,6 +191,7 @@ export function fitChat({ sections, contents, materials, tpm, squeeze = 0, desir
   // Keep at least 6 recent messages (or all, if fewer): shorten long tutor replies first,
   // then give study-material excerpts less room — memory of the conversation matters most.
   const wantRecent = Math.min(squeeze ? 4 : 6, history.length);
+  // (lean mode keeps 6 recent messages too — it shortens them instead)
   const plans = [
     { reply: caps.reply, share: 0.45 },
     { reply: Math.round(caps.reply / 2), share: 0.45 },
@@ -214,6 +235,6 @@ export function fitChat({ sections, contents, materials, tpm, squeeze = 0, desir
     contents: fitted,
     inputTokens,
     maxOutput: outputFor(budget, inputTokens),
-    report: { kept: recent.length, summarised: older.length, materials: `${mat.kept}/${mat.total}`, squeeze, input: inputTokens, budget: budget.input }
+    report: { kept: recent.length, summarised: older.length, materials: `${mat.kept}/${mat.total}`, squeeze, lean: budget.lean, input: inputTokens, budget: budget.input }
   };
 }

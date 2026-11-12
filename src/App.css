@@ -356,6 +356,23 @@
   text-overflow: ellipsis;
 }
 
+.subject-pill--select {
+  position: relative;
+  cursor: pointer;
+}
+.subject-pill--select:hover,
+.subject-pill--select:focus-within {
+  border-color: var(--line, var(--hair));
+  color: var(--text, inherit);
+}
+.subject-pill--select select {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  opacity: 0;
+  cursor: pointer;
+  font-size: 14px;
+}
 .subject-pill {
   display: inline-flex;
   flex: none;

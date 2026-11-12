@@ -31,7 +31,19 @@ export function setPlanAuth({ token, preview } = {}) {
   planToken = token || '';
   devPlan = import.meta.env?.DEV ? preview || '' : '';
 }
-const planHeaders = () => ({ ...(planToken ? { 'x-eureka-plan': planToken } : {}), ...(devPlan ? { 'x-eureka-dev-plan': devPlan } : {}) });
+// A random id for this browser, so the server can apply fair-use limits per student.
+let deviceId = '';
+const device = () => {
+  if (deviceId) return deviceId;
+  try {
+    deviceId = localStorage.getItem('eureka.device') || '';
+    if (!deviceId) localStorage.setItem('eureka.device', (deviceId = (crypto.randomUUID?.() ?? `${Date.now()}-${Math.random()}`).replace(/[^A-Za-z0-9-]/g, '')));
+  } catch {
+    deviceId = deviceId || `t${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
+  }
+  return deviceId;
+};
+const planHeaders = () => ({ 'x-eureka-device': device(), ...(planToken ? { 'x-eureka-plan': planToken } : {}), ...(devPlan ? { 'x-eureka-dev-plan': devPlan } : {}) });
 
 async function safeFetch(url, init, signal) {
   if (signal) {
@@ -73,7 +85,8 @@ const STUDENT_TITLES = {
   no_credits: 'EUREKA’s AI is taking a short break.',
   forbidden: 'That model isn’t available right now.',
   quota: 'EUREKA is busy right now.',
-  rate_limited: 'EUREKA is busy right now.',
+  rate_limited: 'Slow down a little.',
+  daily_limit: 'That’s today’s AI allowance used.',
   upstream_unreachable: 'EUREKA couldn’t answer just now.',
   bad_request: 'EUREKA couldn’t answer just now.',
   unavailable: 'EUREKA is busy right now.',
@@ -132,6 +145,8 @@ async function errorFrom(res) {
   // Students see friendly messages; Groq's raw errors are only shown on `npm run dev`.
   if (kind === 'quota' || kind === 'rate_limited')
     message = `Lots of students are studying right now, so EUREKA needs a short pause. ${Number.isFinite(wait) && wait > 0 ? (wait > 90 ? `Please try again in about ${Math.ceil(wait / 60)} minutes.` : `Please try again in about ${wait} seconds.`) : 'Please try again in a moment.'}`;
+  if (kind === 'rate_limited') message = `You’re sending messages very quickly. Wait ${Number.isFinite(wait) && wait > 0 ? `${wait} seconds` : 'a moment'} and try again.`;
+  if (kind === 'daily_limit') message = 'You’ve used today’s AI allowance on your plan. It resets at midnight (UTC) — or upgrade for more.';
   if (kind === 'too_large') message = 'That was a lot to read in one go. Try a shorter message, or ask about a specific page or section of your notes.';
   if (kind === 'unavailable' || kind === 'upstream_unreachable' || kind === 'failed' || kind === 'bad_request') message = 'EUREKA couldn’t answer just now. Please try again in a moment.';
   if (kind === 'model_unavailable' || kind === 'forbidden') message = 'This AI model isn’t available right now. Pick another model from the menu and try again.';
