@@ -1,0 +1,318 @@
+/*
+  EUREKA top-bar layout, in EUREKA's own identity (dark forest green, emerald, Fraunces + Manrope).
+    • a top navigation bar instead of the fixed sidebar; the sidebar becomes a slide-out menu (☰)
+    • page titles for Revision and Calendar
+    • subjects shown as course cards on the chat home screen
+    • revision cards with a small category strip above their title
+
+  Switched on by <html data-layout="topbar"> in index.html (App.jsx reads the same attribute).
+  Remove the attribute to go back to the original sidebar layout — nothing else depends on this file.
+*/
+
+/* ── top navigation bar ─────────────────────────────── */
+.app[data-layout='topbar'] {
+  grid-template-columns: 0 1fr !important;
+}
+.app[data-layout='topbar'] .main {
+  grid-column: 1 / -1;
+}
+.masthead {
+  position: relative;
+  z-index: 30;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 62px;
+  padding: 0 20px;
+  border-bottom: 1px solid var(--hair);
+  background: color-mix(in srgb, var(--dark) 86%, transparent);
+  backdrop-filter: blur(10px);
+}
+.masthead__logo {
+  display: flex;
+  align-items: center;
+  margin-right: 18px;
+  padding: 4px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+}
+.masthead__nav {
+  display: flex;
+  align-items: stretch;
+  align-self: stretch;
+  gap: 2px;
+}
+.masthead__nav button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  background: none;
+  color: var(--sage);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: color 150ms ease;
+}
+.masthead__nav button:hover,
+.masthead__nav button[data-active] {
+  color: var(--text);
+}
+.masthead__nav button[data-active]::after {
+  content: '';
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  bottom: -1px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--emerald);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--emerald) 60%, transparent);
+}
+.masthead__spacer {
+  flex: 1;
+  align-self: stretch;
+}
+.masthead__login {
+  padding: 8px 12px;
+  border: 0;
+  background: none;
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.masthead__login:hover {
+  color: var(--emerald);
+}
+.masthead__signup {
+  height: 36px;
+  padding: 0 16px;
+}
+.masthead__menu,
+.masthead__search {
+  width: 38px;
+  height: 38px;
+}
+/* account button in the bar: just the avatar */
+.masthead__account .account {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+.masthead__account[data-guest] .account__trigger {
+  display: none;
+}
+.masthead__account .account__trigger {
+  padding: 4px;
+  border-radius: 99px;
+}
+.masthead__account .account__name,
+.masthead__account .plan-badge--mini {
+  display: none;
+}
+.masthead .account__pop {
+  top: 68px;
+  right: 16px;
+  bottom: auto;
+  left: auto;
+}
+.masthead .nav__count {
+  position: static;
+}
+
+/* ── chat bar and page titles ───────────────────────── */
+.chatbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--hair);
+}
+.chatbar__title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text);
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.page-head {
+  flex: none;
+  padding: 26px 24px 4px;
+}
+.page-head h1 {
+  margin: 0;
+  font-family: var(--serif);
+  font-size: 36px;
+  font-weight: 400;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+}
+.page-head p {
+  margin: 6px 0 0;
+  color: var(--sage);
+  font-size: 14.5px;
+}
+
+/* ── the sidebar, now a slide-out menu at every size ── */
+.app[data-layout='topbar'] .sidebar {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 50;
+  transform: translateX(-105%);
+  box-shadow: none;
+}
+.app[data-layout='topbar'][data-sidebar] .sidebar {
+  transform: none;
+  box-shadow: 20px 0 60px -20px rgba(0, 0, 0, 0.8);
+}
+.app[data-layout='topbar'][data-sidebar] .scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: block;
+  background: rgba(4, 10, 7, 0.55);
+}
+
+@media (max-width: 900px) {
+  .masthead {
+    padding: 0 10px;
+  }
+  .masthead__nav,
+  .masthead__login {
+    display: none;
+  }
+  .masthead__logo {
+    margin-right: 0;
+  }
+  .masthead__signup {
+    height: 34px;
+    padding: 0 12px;
+  }
+  .chatbar {
+    padding: 8px 12px;
+    flex-wrap: wrap;
+  }
+  .chatbar__title {
+    order: -1;
+    flex-basis: 100%;
+  }
+  .page-head {
+    padding: 18px 16px 4px;
+  }
+  .page-head h1 {
+    font-size: 28px;
+  }
+}
+
+/* ── course cards on the chat home ──────────────────── */
+.app[data-layout='topbar'] .hero {
+  max-width: 860px;
+}
+.course-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 14px;
+  width: min(820px, 100%);
+  margin: 30px auto 0;
+  text-align: left;
+}
+.course-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 88%, transparent);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  backdrop-filter: blur(8px);
+  transition: transform 200ms var(--ease), border-color 200ms ease, box-shadow 200ms ease;
+}
+.course-card:hover {
+  transform: translateY(-3px);
+  border-color: color-mix(in srgb, var(--emerald) 55%, transparent);
+  box-shadow: 0 16px 40px -20px color-mix(in srgb, var(--emerald) 60%, transparent);
+}
+.course-card__strip {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hair);
+  background: color-mix(in srgb, var(--emerald) 14%, transparent);
+  color: var(--emerald);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.course-card[data-tone='1'] .course-card__strip {
+  background: color-mix(in srgb, #7fc8a9 12%, transparent);
+  color: #9be3be;
+}
+.course-card[data-tone='2'] .course-card__strip {
+  background: color-mix(in srgb, #e0a458 12%, transparent);
+  color: #f0c27f;
+}
+.course-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 6px;
+  padding: 14px 16px 16px;
+}
+.course-card__body strong {
+  font-family: var(--serif);
+  font-size: 24px;
+  font-weight: 400;
+  letter-spacing: -0.01em;
+}
+.course-card__body span {
+  color: var(--sage);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+.course-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 16px;
+  padding: 11px 0 13px;
+  border-top: 1px dashed var(--line);
+  color: var(--sage);
+  font-size: 13px;
+  font-weight: 600;
+}
+.course-card__foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── revision cards: small category strip above the title ── */
+.app[data-layout='topbar'] .panel[data-label]::before {
+  content: attr(data-label);
+  display: block;
+  margin: -16px -16px 2px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--hair);
+  background: color-mix(in srgb, var(--emerald) 10%, transparent);
+  color: var(--emerald);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.app[data-layout='topbar'] .panel[data-label] {
+  overflow: hidden;
+}

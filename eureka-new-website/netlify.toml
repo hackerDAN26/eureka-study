@@ -1,0 +1,26 @@
+[build]
+  command = "npm run build"
+  publish = "dist"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# The AI endpoint lives in netlify/edge-functions/ai.js (path /api/ai/*).
+# Required environment variable (set in the Netlify UI, never in this file):
+#   GROQ_API_KEY           (from console.groq.com/keys — starts with gsk_)
+# Optional:
+#   ALLOWED_ORIGINS        extra site origins allowed to call the API, comma-separated
+#   RATE_LIMIT_PER_MINUTE  chat requests per minute per visitor (default 30)
+#   GOOGLE_CLIENT_ID       only if you switch to a different Google OAuth client
+
+[[headers]]
+  for = "/api/*"
+  [headers.values]
+    Cache-Control = "no-store"
+
+# Google sign-in opens a popup; this keeps it able to report back to the page.
+[[headers]]
+  for = "/*"
+  [headers.values]
+    Cross-Origin-Opener-Policy = "same-origin-allow-popups"
+    Referrer-Policy = "strict-origin-when-cross-origin"

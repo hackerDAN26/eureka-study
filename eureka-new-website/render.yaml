@@ -1,0 +1,15 @@
+# Render Blueprint: Render → New → Blueprint → pick this repository.
+# You'll be asked for GROQ_API_KEY (it's never stored in this file).
+services:
+  - type: web
+    name: eureka-study
+    runtime: node
+    plan: free
+    buildCommand: npm install && npm run build
+    startCommand: npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: GROQ_API_KEY
+        sync: false

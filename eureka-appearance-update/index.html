@@ -1,0 +1,53 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#F6F7F2" />
+    <script>
+      /* Appearance (light / dark / system) — applied before paint so there's no colour flash. Same rules as src/lib/appearance.js. */
+      (function () {
+        var a = 'system';
+        try { a = localStorage.getItem('eureka.appearance') || 'system'; } catch (e) {}
+        var dark = a === 'dark' || (a !== 'light' && !!window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        var root = document.documentElement;
+        if (dark) delete root.dataset.theme; else root.dataset.theme = 'paper';
+        root.style.colorScheme = dark ? 'dark' : 'light';
+        root.style.background = dark ? '#08140f' : '#f6f7f2';
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', dark ? '#08140f' : '#f6f7f2');
+      })();
+    </script>
+    <title>EUREKA – AI study tutor, revision planner and exam practice</title>
+    <meta name="google-site-verification" content="IZK0JmCuYaM-8JhCO_0UH5LLB548_qJHluBLbwcv25o" />
+    <meta name="google-site-verification" content="OPl4huBx5nFVZ8rUlMynkx6zTE_8uy868UrelmFQuJY" />
+    <meta name="description" content="EUREKA is an AI study tutor for GCSE, A-Level, IB and AP students. Ask about your own notes, practise exam questions with examiner-style marking, and get a revision timetable built around your exams." />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="EUREKA" />
+    <meta property="og:title" content="EUREKA – Your studies, organised." />
+    <meta property="og:description" content="AI tutor for your own notes, exam questions marked like an examiner, and a revision timetable built around your exams." />
+    <meta name="twitter:card" content="summary" />
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+    <script>
+      // Opened by double-clicking this file? Browsers can't run the source code that way,
+      // which would leave a blank page — explain what to do instead.
+      setTimeout(function () {
+        var root = document.getElementById('root');
+        if (location.protocol !== 'file:' || !root || root.childNodes.length) return;
+        root.innerHTML =
+          '<div style="max-width:560px;margin:12vh auto;padding:32px;border:1px solid #1f4a37;border-radius:18px;background:#102a20;color:#f1f4ef;font:15px/1.6 system-ui,sans-serif">' +
+          '<h1 style="margin:0 0 12px;font-size:22px">This file can’t be opened directly</h1>' +
+          '<p style="margin:0 0 12px;color:#a0b3a6">This <code>index.html</code> is the starting point for EUREKA’s source code. A browser can only show the site when it is served by the development server or deployed.</p>' +
+          '<p style="margin:0 0 6px"><b>To run it on your computer:</b> open a terminal in this folder and run</p>' +
+          '<pre style="margin:0 0 12px;padding:12px;border-radius:10px;background:#08140f;color:#39a875">npm install\nnpm run dev</pre>' +
+          '<p style="margin:0 0 12px">then open <b>http://localhost:5173</b> in your browser.</p>' +
+          '<p style="margin:0;color:#a0b3a6">Just want to look around? Open <b>eureka-standalone.html</b> instead — it opens with a double-click (the AI tutor needs the server, though).</p>' +
+          '</div>';
+      }, 1500);
+    </script>
+  </body>
+</html>

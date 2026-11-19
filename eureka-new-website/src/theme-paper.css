@@ -1,0 +1,481 @@
+/*
+  EUREKA "Paper" style — EUREKA's own layout and shapes in a light colour scheme, with a few
+  Codecademy-inspired touches.
+    • colours  — off-white page, navy text, white cards, EUREKA green accents
+    • fonts    — DM Sans (text and headings, italic accent word), DM Mono (small labels)
+    • touches  — subject cards on the chat home screen, soft tinted label strips on revision
+                 cards, typewriter-style small labels, dotted dividers
+
+  Switched on by <html data-theme="paper"> in index.html. Remove that attribute to go back to
+  the original dark forest-green style — nothing else depends on this file.
+*/
+@import '@fontsource-variable/dm-sans';
+@import '@fontsource-variable/dm-sans/wght-italic.css';
+@import '@fontsource/dm-mono/400.css';
+@import '@fontsource/dm-mono/500.css';
+
+/* Soria (headings) — add Soria.woff2 / Soria.ttf to public/fonts (see public/fonts/README.md).
+   Until then headings fall back to Fraunces, EUREKA's original serif. */
+@font-face {
+  font-family: 'Soria';
+  src:
+    url('/fonts/Soria.woff2') format('woff2'),
+    url('/fonts/Soria.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root[data-theme='paper'] {
+  /* palette — change these to recolour everything */
+  --page: #f6f7f2;
+  --ink: #0f1d2e;
+  --ink-2: #4b5567;
+  --brand: #12805c;
+  --brand-hover: #0b6a4a;
+  --brand-soft: #e2f4ec;
+  --strip-1: #dcf3e7; /* mint */
+  --strip-2: #e1f0ff; /* sky */
+  --strip-3: #fff3c9; /* butter */
+  --mono: 'DM Mono', ui-monospace, 'SFMono-Regular', Menlo, monospace;
+  --display: 'Soria', 'Fraunces Variable', 'Fraunces', Georgia, serif;
+
+  /* type scale — every heading and text size comes from here */
+  --fs-hero: clamp(38px, 5.2vw, 60px);
+  --fs-h1: 34px;
+  --fs-h2: 26px;
+  --fs-h3: 20px;
+  --fs-h4: 17px;
+  --fs-body: 15px;
+  --fs-small: 13px;
+  --fs-label: 12px;
+  --lh-tight: 1.1;
+  --lh-body: 1.55;
+
+  /* the app's own tokens, re-pointed */
+  --bg: var(--page);
+  --surface: #ffffff;
+  --forest: var(--brand-soft);
+  --dark: #ffffff;
+  --emerald: var(--brand);
+  --text: var(--ink);
+  --sage: var(--ink-2);
+  --line: rgba(15, 29, 46, 0.16);
+  --hair: rgba(15, 29, 46, 0.1);
+  --sans: 'DM Sans Variable', 'DM Sans', ui-sans-serif, system-ui, sans-serif;
+  --serif: var(--sans);
+
+  color-scheme: light;
+  font-family: var(--sans);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+/* ── base ───────────────────────────────────────────── */
+[data-theme='paper'] body {
+  background: var(--page) !important;
+}
+[data-theme='paper'] ::selection {
+  background: color-mix(in srgb, var(--brand) 22%, transparent);
+}
+[data-theme='paper'] * {
+  scrollbar-color: rgba(15, 29, 46, 0.22) transparent;
+}
+/* ── typography ─────────────────────────────────────
+   Display (Soria, one weight): page and card titles. Text: DM Sans. Labels: DM Mono. */
+[data-theme='paper'] h1,
+[data-theme='paper'] h2,
+[data-theme='paper'] h3,
+[data-theme='paper'] h4,
+[data-theme='paper'] .course-card__body strong {
+  font-family: var(--display);
+  font-weight: 400;
+  font-synthesis: none;
+  letter-spacing: 0;
+  line-height: var(--lh-tight);
+  color: var(--ink);
+}
+[data-theme='paper'] .hero h1 {
+  font-size: var(--fs-hero);
+  line-height: 1.04;
+  letter-spacing: -0.01em;
+}
+/* EUREKA's accent word stays — in green rather than italic, since Soria has one style */
+[data-theme='paper'] .hero h1 em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--brand);
+}
+[data-theme='paper'] .page-head h1,
+[data-theme='paper'] .legal__doc h1 {
+  font-size: var(--fs-h1);
+}
+[data-theme='paper'] .cal__bar h2,
+[data-theme='paper'] .usage__head h2,
+[data-theme='paper'] .onboard h2,
+[data-theme='paper'] .onboard__head h3 {
+  font-size: var(--fs-h2);
+}
+[data-theme='paper'] .dialog__head h3,
+[data-theme='paper'] .plan h4 {
+  font-size: var(--fs-h2);
+}
+[data-theme='paper'] .panel h3,
+[data-theme='paper'] .course-card__body strong {
+  font-size: var(--fs-h3);
+}
+[data-theme='paper'] .legal__doc h2,
+[data-theme='paper'] .prose h2 {
+  font-size: var(--fs-h3);
+}
+[data-theme='paper'] .prose h1 {
+  font-size: var(--fs-h2);
+}
+[data-theme='paper'] .prose h3,
+[data-theme='paper'] .prose h4 {
+  font-size: var(--fs-h4);
+}
+[data-theme='paper'] .prose {
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+/* numbers stay in the clean text face */
+[data-theme='paper'] .tile strong,
+[data-theme='paper'] .plan__price strong,
+[data-theme='paper'] .rw-points strong,
+[data-theme='paper'] .usage__stat strong,
+[data-theme='paper'] .pomo__time,
+[data-theme='paper'] .countdown__days {
+  font-family: var(--sans);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+[data-theme='paper'] .fine,
+[data-theme='paper'] .dialog__sub,
+[data-theme='paper'] .plan__tag,
+[data-theme='paper'] .plan__bill,
+[data-theme='paper'] .chat-row__sub,
+[data-theme='paper'] .composer__note {
+  font-size: var(--fs-small);
+  line-height: 1.45;
+}
+[data-theme='paper'] .brand-word,
+[data-theme='paper'] .logo__word {
+  font-family: var(--sans);
+  font-weight: 700;
+}
+[data-theme='paper'] .side-label,
+[data-theme='paper'] .hero__eyebrow,
+[data-theme='paper'] .tile > span:first-child,
+[data-theme='paper'] .usage__stat > span,
+[data-theme='paper'] .plan-badge {
+  font-size: var(--fs-label);
+}
+
+/* ── icons ───────────────────────────────────────────── */
+[data-theme='paper'] .title-icon {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+[data-theme='paper'] .title-icon svg,
+[data-theme='paper'] .course-card__icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+[data-theme='paper'] .title-icon svg {
+  width: 30px;
+  height: 30px;
+  padding: 6px;
+  border-radius: 8px;
+}
+[data-theme='paper'] .course-card__icon {
+  width: 42px;
+  height: 42px;
+  margin-bottom: 6px;
+}
+[data-theme='paper'] .course-card[data-tone='1'] .course-card__icon {
+  background: var(--strip-2);
+  color: #1d5c99;
+}
+[data-theme='paper'] .course-card[data-tone='2'] .course-card__icon {
+  background: var(--strip-3);
+  color: #8a5a00;
+}
+[data-theme='paper'] .chip svg {
+  color: var(--brand);
+}
+[data-theme='paper'] .nav svg {
+  color: var(--brand);
+}
+/* small labels in the typewriter face */
+[data-theme='paper'] .side-label,
+[data-theme='paper'] .hero__eyebrow,
+[data-theme='paper'] .tile > span:first-child,
+[data-theme='paper'] .usage__stat > span,
+[data-theme='paper'] .month__dow,
+[data-theme='paper'] .plan-badge,
+[data-theme='paper'] .qtag {
+  font-family: var(--mono);
+  font-weight: 400;
+  letter-spacing: 0.02em;
+}
+/* the animated road background belongs to the dark style */
+[data-theme='paper'] .road,
+[data-theme='paper'] .road__veil {
+  display: none !important;
+}
+
+/* ── buttons and accents ───────────────────────────── */
+[data-theme='paper'] .btn:not(.btn--ghost):not(.btn--ghost-line):not(.btn--danger) {
+  background: var(--brand);
+  color: #fff;
+}
+[data-theme='paper'] .btn:not(.btn--ghost):not(.btn--ghost-line):not(.btn--danger):hover:not(:disabled) {
+  filter: none;
+  background: var(--brand-hover);
+}
+[data-theme='paper'] .btn--ghost-line:hover:not(:disabled) {
+  background: rgba(15, 29, 46, 0.04);
+}
+[data-theme='paper'] .save,
+[data-theme='paper'] .plan__flag,
+[data-theme='paper'] .ws__glyph,
+[data-theme='paper'] .tickbox[data-on],
+[data-theme='paper'] .qual[aria-pressed='true'] .qual__tick,
+[data-theme='paper'] .rate__scale button[aria-checked='true'],
+[data-theme='paper'] .day[data-today] .day__num,
+[data-theme='paper'] .promo-banner--welcome .promo-banner__tag,
+[data-theme='paper'] .pomo__main,
+[data-theme='paper'] .msg__cta {
+  color: #fff;
+}
+[data-theme='paper'] .sidebar {
+  background: #fff;
+}
+
+/* ── inspiration: subject cards on the chat home screen ── */
+[data-theme='paper'] .hero {
+  max-width: 860px;
+}
+[data-theme='paper'] .course-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 14px;
+  width: min(820px, 100%);
+  margin: 28px auto 0;
+  text-align: left;
+}
+[data-theme='paper'] .course-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(15, 29, 46, 0.04);
+  transition: transform 180ms var(--ease), box-shadow 180ms ease, border-color 180ms ease;
+}
+[data-theme='paper'] .course-card:hover {
+  transform: translateY(-2px);
+  border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  box-shadow: 0 10px 24px -14px rgba(15, 29, 46, 0.35);
+}
+[data-theme='paper'] .course-card__strip {
+  padding: 8px 14px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--strip-1);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+[data-theme='paper'] .course-card .course-card__strip,
+[data-theme='paper'] .course-card[data-tone] .course-card__strip {
+  color: var(--ink);
+  font-weight: 400;
+}
+[data-theme='paper'] .course-card[data-tone='1'] .course-card__strip {
+  background: var(--strip-2);
+}
+[data-theme='paper'] .course-card[data-tone='2'] .course-card__strip {
+  background: var(--strip-3);
+}
+[data-theme='paper'] .course-card__body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 5px;
+  padding: 12px 14px 14px;
+}
+[data-theme='paper'] .course-card__body span {
+  color: var(--ink-2);
+  font-size: 13.5px;
+  line-height: 1.45;
+}
+[data-theme='paper'] .course-card__foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 14px;
+  padding: 10px 0 12px;
+  border-top: 1px dotted rgba(15, 29, 46, 0.35);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+[data-theme='paper'] .course-card__foot span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* ── inspiration: soft label strips on revision cards ── */
+[data-theme='paper'] .panel,
+[data-theme='paper'] .tile {
+  background: #fff;
+}
+[data-theme='paper'] .panel[data-label] {
+  overflow: hidden;
+}
+[data-theme='paper'] .panel[data-label]::before {
+  content: attr(data-label);
+  display: block;
+  margin: -16px -16px 2px;
+  padding: 7px 16px;
+  border-bottom: 1px solid var(--hair);
+  background: var(--strip-1);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+}
+[data-theme='paper'] .today__side .panel[data-label]::before,
+[data-theme='paper'] .panel[data-label='Progress']::before,
+[data-theme='paper'] .panel[data-label='Exam practice']::before,
+[data-theme='paper'] .panel[data-label='Create']::before {
+  background: var(--strip-2);
+}
+[data-theme='paper'] .panel[data-label='Focus areas']::before,
+[data-theme='paper'] .panel[data-label='Deadlines']::before,
+[data-theme='paper'] .panel[data-label='Study time']::before {
+  background: var(--strip-3);
+}
+[data-theme='paper'] .tile > span:first-child {
+  padding-bottom: 6px;
+  border-bottom: 1px dotted rgba(15, 29, 46, 0.3);
+}
+[data-theme='paper'] .plan__bill {
+  padding-top: 10px;
+  border-top: 1px dotted rgba(15, 29, 46, 0.3);
+}
+
+/* ── plans ─────────────────────────────────────────── */
+[data-theme='paper'] .plan {
+  background: #fff;
+}
+[data-theme='paper'] .plan[data-plan='pro'] {
+  background: radial-gradient(120% 60% at 50% 0%, var(--brand-soft), transparent 70%), #fff;
+}
+[data-theme='paper'] .plan[data-plan='max'] {
+  background: radial-gradient(120% 60% at 50% 0%, var(--strip-3), transparent 70%), #fff;
+}
+[data-theme='paper'] .plan[data-plan='pro'] h4,
+[data-theme='paper'] .plan[data-plan='max'] h4 {
+  color: var(--brand);
+}
+
+/* ── chat ───────────────────────────────────────────── */
+[data-theme='paper'] .prose strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+[data-theme='paper'] .prose code {
+  font-family: var(--mono);
+}
+[data-theme='paper'] .msg--user .msg__bubble {
+  background: var(--brand-soft);
+}
+[data-theme='paper'] .msg__meta {
+  font-family: var(--mono);
+}
+[data-theme='paper'] .prompt-bar {
+  --pb-bg: #ffffff !important;
+  --pb-ink: var(--ink) !important;
+  --pb-menu: #ffffff !important;
+  --pb-spark: var(--brand) !important;
+}
+[data-theme='paper'] .prompt-bar__field {
+  box-shadow: 0 0 0 1px var(--line), 0 8px 24px -14px rgba(15, 29, 46, 0.3);
+}
+[data-theme='paper'] .prompt-bar__menu {
+  box-shadow: 0 0 0 1px var(--line), 0 16px 40px -16px rgba(15, 29, 46, 0.35);
+}
+[data-theme='paper'] .prompt-bar__send[data-armed] {
+  background: var(--brand);
+  color: #fff;
+}
+[data-theme='paper'] .prompt-bar__input:focus-visible {
+  outline: none;
+}
+[data-theme='paper'] .branched-menu {
+  --bm-ink: var(--ink) !important;
+  --bm-accent: var(--brand) !important;
+  --bm-line: rgba(15, 29, 46, 0.25) !important;
+}
+
+/* ── readable colours that were pale on the dark style ── */
+[data-theme='paper'] .danger-text,
+[data-theme='paper'] .form-error {
+  color: #b23214;
+}
+[data-theme='paper'] .auth-note--error {
+  border-color: rgba(178, 50, 20, 0.35);
+  color: #9c2a10;
+}
+[data-theme='paper'] .bonus-note {
+  color: #8a5300 !important;
+}
+
+/* ── soft shadows (the dark style used heavy black ones) ── */
+[data-theme='paper'] .dialog__card {
+  box-shadow: 0 30px 80px -24px rgba(15, 29, 46, 0.35);
+}
+[data-theme='paper'] .dialog,
+[data-theme='paper'] .scrim {
+  background: rgba(15, 29, 46, 0.35);
+}
+[data-theme='paper'] .account__pop,
+[data-theme='paper'] .bell__pop,
+[data-theme='paper'] .ws__menu,
+[data-theme='paper'] .pomo {
+  box-shadow: 0 16px 44px -16px rgba(15, 29, 46, 0.35) !important;
+}
+[data-theme='paper'] .toast {
+  background: var(--ink);
+  border-color: var(--ink);
+  color: #fff;
+}
+@media (max-width: 900px) {
+  [data-theme='paper'] .sidebar {
+    box-shadow: none;
+  }
+  [data-theme='paper'] .app[data-sidebar] .sidebar {
+    box-shadow: 16px 0 40px -24px rgba(15, 29, 46, 0.35);
+  }
+}
+[data-theme='paper'] .usage__bar {
+  background: var(--brand);
+}
+[data-theme='paper'] .usage__tip {
+  background: #fff;
+  box-shadow: 0 8px 24px rgba(15, 29, 46, 0.18);
+}
